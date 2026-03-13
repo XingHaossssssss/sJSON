@@ -1,22 +1,34 @@
 // sj.h - v0.4 - rxi 2025
 // public domain - no warranty implied, use at your own risk
 
+// 流式JSON词法解析器 tokenizer + 简单迭代器
 #ifndef SJ_H
 #define SJ_H
 
 #include <stddef.h>
 #include <stdbool.h>
 
+// 解析器上下文
 typedef struct {
-    char *data, *cur, *end;
-    int depth;
-    char *error;
+    char* data;     // JSON字符串
+    char* cur;      // 当前解析位置
+    char* end;      // 字符串结束位置
+    int depth;      // JSON的嵌套深度
+    char *error;    // 错误信息
 } sj_Reader;
 
+/*
+解析流程抽象：
+data ------------------------ end
+        ^
+        cur
+*/
+
+// 解析出来的单个JSON元素 token
 typedef struct {
     int type;
-    char *start, *end;
-    int depth;
+    char *start, *end; // 值起始，直结束 
+    int depth; // 嵌套层级
 } sj_Value;
 
 enum { SJ_ERROR, SJ_END, SJ_ARRAY, SJ_OBJECT, SJ_NUMBER, SJ_STRING, SJ_BOOL, SJ_NULL };
@@ -31,7 +43,7 @@ void sj_location(sj_Reader *r, int *line, int *col);
 
 #ifdef SJ_IMPL
 
-
+// 初始化解析器
 sj_Reader sj_reader(char *data, size_t len) {
     return (sj_Reader){ .data = data, .cur = data, .end = data + len };
 }
@@ -52,7 +64,7 @@ static bool sj__is_string(char *cur, char *end, char *expect) {
     return true;
 }
 
-
+// 解析一个json token
 sj_Value sj_read(sj_Reader *r) {
     sj_Value res;
 top:
@@ -61,17 +73,20 @@ top:
     res.start = r->cur;
 
     switch (*r->cur) {
+    // 跳过空白字符
     case ' ': case '\n': case '\r': case '\t':
     case ':': case ',':
         r->cur++;
         goto top;
 
+    // 解析Number
     case '-': case '0': case '1': case '2': case '3': case '4':
     case '5': case '6': case '7': case '8': case '9':
         res.type = SJ_NUMBER;
         while (r->cur != r->end && sj__is_number_cont(*r->cur)) { r->cur++; }
         break;
-
+    
+    // 解析字符串
     case '"':
         res.type = SJ_STRING;
         res.start = ++r->cur;
@@ -84,6 +99,7 @@ top:
         res.end = r->cur++;
         return res;
 
+    // 解析object 和 array
     case '{': case '[':
         res.type = (*r->cur == '{') ? SJ_OBJECT : SJ_ARRAY;
         res.depth = ++r->depth;
@@ -99,6 +115,7 @@ top:
         r->cur++;
         break;
 
+    // 解析true false null
     case 'n': case 't': case 'f':
         res.type = (*r->cur == 'n') ? SJ_NULL : SJ_BOOL;
         if (sj__is_string(r->cur, r->end,  "null")) { r->cur += 4; break; }
@@ -114,7 +131,7 @@ top:
     return res;
 }
 
-
+// 跳过当前对象/数组剩余内容
 static void sj__discard_until(sj_Reader *r, int depth) {
     sj_Value val;
     val.type = SJ_NULL;
@@ -124,14 +141,15 @@ static void sj__discard_until(sj_Reader *r, int depth) {
 }
 
 
-bool sj_iter_array(sj_Reader *r, sj_Value arr, sj_Value *val) {
+// 遍历数组元素
+bool sj_iter_array(sj_Reader* r, sj_Value arr, sj_Value* val) {
     sj__discard_until(r, arr.depth);
     *val = sj_read(r);
     if (val->type == SJ_ERROR || val->type == SJ_END) { return false; }
     return true;
 }
 
-
+// 对象迭代
 bool sj_iter_object(sj_Reader *r, sj_Value obj, sj_Value *key, sj_Value *val) {
     sj__discard_until(r, obj.depth);
     *key = sj_read(r);
@@ -142,7 +160,7 @@ bool sj_iter_object(sj_Reader *r, sj_Value obj, sj_Value *key, sj_Value *val) {
     return true;
 }
 
-
+// 错误定位
 void sj_location(sj_Reader *r, int *line, int *col) {
     int ln = 1, cl = 1;
     for (char *p = r->data; p != r->cur; p++) {
